@@ -1,0 +1,19 @@
+# Local state created by switcher scripts at runtime
+.app-account-switch/
+*.blob
+*-credentials.json
+*-keychain.blob
+auth-switch-backups/
+.auth-switch.lock/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Backups
+*.bak
+*~
