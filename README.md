@@ -19,6 +19,29 @@ See [docs/keychain-caveat.md](docs/keychain-caveat.md) for the full technical ex
 
 ## Install
 
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LARIkoz/agentic-cli-account-switcher/main/install.sh | bash
+```
+
+Installs `claude-switch` and `codex-switch` into `/usr/local/bin` if writable, otherwise `~/.local/bin`.
+
+Environment overrides:
+
+```bash
+# Custom install dir
+curl -fsSL https://raw.githubusercontent.com/LARIkoz/agentic-cli-account-switcher/main/install.sh | PREFIX=$HOME/bin bash
+
+# Install only one of the two tools
+curl -fsSL https://raw.githubusercontent.com/LARIkoz/agentic-cli-account-switcher/main/install.sh | TOOLS=claude bash
+
+# Pin a specific tag/branch
+curl -fsSL https://raw.githubusercontent.com/LARIkoz/agentic-cli-account-switcher/main/install.sh | REF=v0.1.0 bash
+```
+
+### Manual (git clone)
+
 ```bash
 git clone https://github.com/LARIkoz/agentic-cli-account-switcher.git
 cd agentic-cli-account-switcher
@@ -29,7 +52,7 @@ ln -s "$PWD/bin/claude-switch.sh" /usr/local/bin/claude-switch
 ln -s "$PWD/bin/codex-switch.sh"  /usr/local/bin/codex-switch
 ```
 
-Requirements: macOS, bash 3.2+, `security` CLI (built into macOS), the AI tool you want to switch (Claude Code 2.x or Codex CLI).
+Requirements: macOS, bash 3.2+, `security` CLI (built into macOS), `curl`, the AI tool you want to switch (Claude Code 2.x or Codex CLI).
 
 ## Usage — Claude Code
 
