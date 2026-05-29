@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.larikoz.codex-auth-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>exec "$HOME/.local/bin/codex-auth-sync"</string>
+    </array>
+
+    <key>WatchPaths</key>
+    <array>
+        <!-- REPLACE with your actual home path: /Users/YOURUSERNAME/.codex/auth.json -->
+        <string>/Users/YOURUSERNAME/.codex/auth.json</string>
+    </array>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/codex-auth-sync.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/codex-auth-sync.stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+</dict>
+</plist>
