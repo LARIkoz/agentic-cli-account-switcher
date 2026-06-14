@@ -3,10 +3,15 @@ set -euo pipefail
 
 # Sync ~/.codex/auth.json → codex-switcher:EMAIL keychain blob.
 # Triggered by launchd WatchPaths when auth.json changes (on every
-# Symbioose switch, Codex login, or token refresh).
+# Symbioose switch, Codex login, or token refresh done BY THE OFFICIAL CLIENT).
 #
 # Reads the email from the id_token JWT, saves the full auth.json
 # as a hex-encoded keychain blob under codex-switcher:EMAIL.
+#
+# IMPORTANT: this script is PASSIVE — it only copies bytes. It NEVER calls the
+# OAuth token endpoint. Do NOT add token refreshing here. See
+# docs/token-refresh-pitfall.md: OpenAI uses one-time-use rotating refresh
+# tokens, so any independent refresher races the official client and kills both.
 
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 AUTH_FILE="$CODEX_HOME/auth.json"

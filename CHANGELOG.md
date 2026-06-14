@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-06-14
+
+### Removed (BREAKING)
+
+- **`codex-refresh-tokens.sh` and its launchd plist** — REMOVED. This independent
+  token refresher was harmful: OpenAI uses one-time-use rotating refresh tokens,
+  so a background refresher races the official Codex client and kills both tokens
+  within days (`refresh_token_reused`). See `docs/token-refresh-pitfall.md`.
+
+### Added
+
+- `docs/token-refresh-pitfall.md` — explains why independent OAuth refreshers must
+  never be used with rotating one-time-use refresh tokens, and how to recover.
+
+### Changed
+
+- `codex-auth-sync.sh` — clarified that it is strictly passive (byte-copy only,
+  never calls the OAuth endpoint). It remains safe and is the only token-related
+  automation that should run.
+
 ## [0.1.1] — 2026-05-25
 
 ### Added
