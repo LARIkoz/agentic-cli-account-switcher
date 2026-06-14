@@ -106,9 +106,38 @@ Set `CLAUDE_ACC2_HOME` to override the secondary account's `$HOME` (default `$HO
 # Skip auto-launch of Codex App after switch
 ./bin/codex-switch.sh switch --no-app
 
-# Force switch even if Codex processes are still running (use with care)
+# Leave the VS Code / Cursor editor untouched (file-only swap)
+./bin/codex-switch.sh switch --no-vscode
+
+# Force switch even if UNMANAGED codex processes are still running (use with care)
 ./bin/codex-switch.sh switch --allow-running
 ```
+
+### Switching across CLI, App, and VS Code / Cursor
+
+All three Codex surfaces share `~/.codex/auth.json`. The catch: long-running
+clients (the desktop App and the editor's `codex app-server`) read the token
+**once** and cache it in memory, so swapping the file alone does not change the
+account they use until they restart.
+
+This repo handles that for you:
+
+- **`codex-switch.sh switch`** restarts the Codex App **and** the VS Code / Cursor
+  `codex app-server` after the swap, so every surface picks up the new account.
+  The editor's Codex panel reconnects on next use. Use `--no-vscode` / `--no-app`
+  to leave a surface alone.
+- **`codex-auth-sync.sh`** (the WatchPaths agent) makes the editor follow a switch
+  made by **any** tool — including the Symbioose GUI or `codex login`. When it
+  sees the account (email) change in `auth.json`, it restarts the editor's
+  `codex app-server`. Same-account token refreshes are ignored, so it never
+  disrupts an active session needlessly. Install it via
+  `launchd/com.larikoz.codex-auth-sync.plist` (set the `WatchPaths` path to your
+  `~/.codex/auth.json`).
+
+Processes that are **not** a managed surface — a `codex` running in a terminal, or
+a background bridge like `remodex` / an MCP server that holds `~/.codex/auth.json`
+— still block a switch by default (they could overwrite the swap on their next
+refresh). Stop them, or pass `--allow-running` if you know they are safe.
 
 ## How it works
 

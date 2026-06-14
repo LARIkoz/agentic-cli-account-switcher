@@ -11,16 +11,18 @@ LATEST_BACKUP_FILE="$BACKUP_DIR/latest"
 usage() {
   cat <<'USAGE'
 Usage:
-  codex-switch.sh switch [--no-app] [--allow-running]
-  codex-switch.sh restore-last [--no-app] [--allow-running]
-  codex-switch.sh fix [--no-app] [--allow-running]
+  codex-switch.sh switch [--no-app] [--no-vscode] [--allow-running]
+  codex-switch.sh restore-last [--no-app] [--no-vscode] [--allow-running]
+  codex-switch.sh fix [--no-app] [--no-vscode] [--allow-running]
   codex-switch.sh acc2-status
   codex-switch.sh acc2-smoke
   codex-switch.sh preflight
   codex-switch.sh status
 
 Commands:
-  switch    Quit Codex App, swap auth.json <-> auth_account1.json, reopen Codex App.
+  switch    Swap auth.json <-> auth_account1.json across ALL Codex surfaces:
+            quit+reopen the Codex App, and restart the VS Code/Cursor Codex
+            app-server so the extension re-reads the new account.
             Running it again switches back.
   restore-last
             Restore auth.json and auth_account1.json from the latest backup pair.
@@ -30,17 +32,27 @@ Commands:
   acc2-smoke
             Run a tiny read-only codex exec through CODEX_HOME=~/.codex2.
   preflight
-            Validate auth files and report whether Codex auth-using processes
-            are still running. Does not switch anything.
+            Validate auth files and report whether unmanaged Codex auth-using
+            processes are still running. Does not switch anything.
   status    Print safe file metadata only. Does not print token contents.
 
 Options:
-  --no-app  Do not quit or reopen Codex App. Only swap files.
+  --no-app   Do not quit or reopen the Codex desktop App.
+  --no-vscode
+             Do not restart the VS Code/Cursor Codex app-server. By default the
+             switch kills the editor's `codex app-server` so the extension
+             respawns it and re-reads auth.json; the Codex panel reconnects on
+             next use. Pass this to leave the editor untouched (file-only swap).
   --allow-running
-            Allow switch/fix while Codex App or other codex app-server processes
-            are still running. Unsafe; use only for emergency manual recovery.
+            Allow switch/fix while UNMANAGED codex auth processes (e.g. a
+            `codex exec` in a terminal) are still running. Unsafe; use only for
+            emergency manual recovery.
 
 Notes:
+  - All three Codex surfaces (CLI, desktop App, VS Code/Cursor extension) share
+    ~/.codex/auth.json. Long-running clients cache the token in memory, so the
+    switch must restart them to pick up the swap. This script handles the App
+    and the editor automatically; the CLI re-reads auth.json on each run.
   - Run from macOS Terminal/iTerm, not from a terminal embedded in Codex App.
   - Does not edit token contents.
   - Creates timestamped backups under ~/.codex/auth-switch-backups.
@@ -119,6 +131,54 @@ open_codex_app() {
   open -a Codex >/dev/null 2>&1 || true
 }
 
+# Why: the VS Code / Cursor Codex extension (openai.chatgpt) spawns a long-lived
+# `codex app-server` from its bundled binary. That server reads ~/.codex/auth.json
+# ONCE at startup and caches the token in memory, so an external auth swap is
+# invisible to it until it restarts. We identify those servers by their binary
+# path living inside an editor extensions dir.
+vscode_codex_pids() {
+  local pid command
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$command" in
+      */.vscode/extensions/openai.chatgpt-*|\
+      */.vscode-insiders/extensions/openai.chatgpt-*|\
+      */.cursor/extensions/openai.chatgpt-*|\
+      */.windsurf/extensions/openai.chatgpt-*|\
+      */.vscode-server/extensions/openai.chatgpt-*)
+        printf '%s\n' "$pid" ;;
+    esac
+  done < <(pgrep -f 'codex app-server' 2>/dev/null || true)
+}
+
+# Why: restart the editor's Codex app-server so it re-reads the swapped auth.json.
+# The extension host respawns it automatically on next Codex panel use (the panel
+# reconnects), reading the new account. We do NOT need to reopen anything.
+kill_vscode_codex() {
+  local pids
+  pids="$(vscode_codex_pids)"
+  if [[ -z "$pids" ]]; then
+    printf 'VS Code/Cursor Codex: no app-server running\n'
+    return 0
+  fi
+  printf 'VS Code/Cursor Codex: restarting app-server (pids: %s)\n' "$(printf '%s ' $pids)"
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
+  local waited=0
+  while [[ -n "$(vscode_codex_pids)" ]] && (( waited < 6 )); do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  # Escalate to SIGKILL if any survived a graceful term.
+  local survivors
+  survivors="$(vscode_codex_pids)"
+  if [[ -n "$survivors" ]]; then
+    # shellcheck disable=SC2086
+    kill -9 $survivors 2>/dev/null || true
+  fi
+}
+
 codex_auth_processes_running() {
   local pids=()
   local pid command
@@ -141,27 +201,63 @@ codex_auth_processes_running() {
   return 1
 }
 
+# Why: only processes we do NOT manage should block a swap. App processes are
+# managed when manage_app=yes (we quit/reopen). Editor app-servers are managed
+# when manage_vscode=yes (we kill/respawn). Anything left (e.g. a `codex exec`
+# in a terminal) genuinely holds auth.json and must block unless --allow-running.
+blocking_codex_pids() {
+  local manage_app="$1"
+  local manage_vscode="$2"
+  local pid command
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    [[ -n "$command" ]] || continue
+    [[ "$command" == *chrome_crashpad_handler* ]] && continue
+    if [[ "$manage_app" == "yes" && "$command" == */Applications/Codex.app/* ]]; then
+      continue
+    fi
+    if [[ "$manage_vscode" == "yes" ]]; then
+      case "$command" in
+        */.vscode/extensions/openai.chatgpt-*|\
+        */.vscode-insiders/extensions/openai.chatgpt-*|\
+        */.cursor/extensions/openai.chatgpt-*|\
+        */.windsurf/extensions/openai.chatgpt-*|\
+        */.vscode-server/extensions/openai.chatgpt-*)
+          continue ;;
+      esac
+    fi
+    printf '%s\n' "$pid"
+  done < <({
+    pgrep -f '/Applications/Codex\.app/Contents/(MacOS/Codex|Frameworks/Codex Helper|Resources/codex app-server)' 2>/dev/null || true
+    pgrep -f 'codex app-server' 2>/dev/null || true
+  } | sort -u)
+}
+
 ensure_no_codex_auth_processes() {
-  local allow_running="$1"
+  local manage_app="$1"
+  local manage_vscode="$2"
+  local allow_running="$3"
   local pids=""
-  pids="$(codex_auth_processes_running || true)"
+  pids="$(blocking_codex_pids "$manage_app" "$manage_vscode" | tr '\n' ' ' | sed 's/ *$//')"
   [[ -z "$pids" ]] && return 0
 
   if [[ "$allow_running" == "yes" ]]; then
-    printf 'warning: Codex auth-using process(es) still running: %s\n' "$pids" >&2
+    printf 'warning: unmanaged Codex auth process(es) still running: %s\n' "$pids" >&2
     printf 'warning: continuing because --allow-running was provided\n' >&2
     return 0
   fi
 
-  printf 'error: Codex auth-using process(es) still running: %s\n' "$pids" >&2
-  printf 'error: close Codex App, VS Code/Codex extensions, and other codex app-server processes, then retry\n' >&2
-  printf 'error: use --allow-running only for emergency manual recovery\n' >&2
+  printf 'error: unmanaged Codex auth process(es) still running: %s\n' "$pids" >&2
+  printf 'error: these hold auth.json and are not managed by this switch.\n' >&2
+  printf 'error: close any `codex` running in a terminal (or pass --allow-running), then retry\n' >&2
   exit 1
 }
 
 switch_accounts() {
   local manage_app="$1"
-  local allow_running="$2"
+  local manage_vscode="$2"
+  local allow_running="$3"
   require_auth_files
   validate_json_shape "$PRIMARY_AUTH"
   validate_json_shape "$SECONDARY_AUTH"
@@ -173,10 +269,15 @@ switch_accounts() {
   local stamp
   stamp="$(date +%Y%m%d-%H%M%S).$$"
 
+  # Stop every long-running client that caches the token BEFORE the swap, so none
+  # can write a stale token back over the file mid-switch.
   if [[ "$manage_app" == "yes" ]]; then
     quit_codex_app
   fi
-  ensure_no_codex_auth_processes "$allow_running"
+  if [[ "$manage_vscode" == "yes" ]]; then
+    kill_vscode_codex
+  fi
+  ensure_no_codex_auth_processes "$manage_app" "$manage_vscode" "$allow_running"
 
   local primary_backup secondary_backup
   primary_backup="$BACKUP_DIR/auth.primary.$stamp.json"
@@ -224,6 +325,9 @@ switch_accounts() {
   if [[ "$manage_app" == "yes" ]]; then
     open_codex_app
   fi
+  if [[ "$manage_vscode" == "yes" ]]; then
+    printf 'VS Code/Cursor Codex: app-server stopped; the Codex panel reconnects on next use (or reload the window).\n'
+  fi
 }
 
 latest_backup_stamp() {
@@ -246,7 +350,8 @@ latest_backup_stamp() {
 
 restore_last() {
   local manage_app="$1"
-  local allow_running="$2"
+  local manage_vscode="$2"
+  local allow_running="$3"
   [[ -d "$BACKUP_DIR" ]] || die "backup dir not found: $BACKUP_DIR"
   acquire_lock
 
@@ -264,7 +369,10 @@ restore_last() {
   if [[ "$manage_app" == "yes" ]]; then
     quit_codex_app
   fi
-  ensure_no_codex_auth_processes "$allow_running"
+  if [[ "$manage_vscode" == "yes" ]]; then
+    kill_vscode_codex
+  fi
+  ensure_no_codex_auth_processes "$manage_app" "$manage_vscode" "$allow_running"
 
   local tmp_primary tmp_secondary restore_done
   tmp_primary="$CODEX_HOME_DIR/.auth.restore.primary.$stamp.json"
@@ -304,6 +412,9 @@ restore_last() {
   if [[ "$manage_app" == "yes" ]]; then
     open_codex_app
   fi
+  if [[ "$manage_vscode" == "yes" ]]; then
+    printf 'VS Code/Cursor Codex: app-server stopped; the Codex panel reconnects on next use (or reload the window).\n'
+  fi
 }
 
 preflight() {
@@ -315,15 +426,22 @@ preflight() {
   safe_stat "$PRIMARY_AUTH"
   safe_stat "$SECONDARY_AUTH"
 
-  local pids=""
-  pids="$(codex_auth_processes_running || true)"
-  if [[ -n "$pids" ]]; then
-    printf 'BLOCKED: Codex auth-using process(es) still running: %s\n' "$pids" >&2
-    printf 'Close Codex App, VS Code/Codex extensions, and other codex app-server processes before switching.\n' >&2
+  local all_pids blocking
+  all_pids="$(codex_auth_processes_running || true)"
+  if [[ -n "$all_pids" ]]; then
+    printf 'codex auth processes running: %s\n' "$all_pids"
+    printf '  (a default switch restarts the Codex App and the VS Code/Cursor app-server automatically)\n'
+  fi
+
+  # Only UNMANAGED processes (e.g. a terminal `codex`) block a default switch.
+  blocking="$(blocking_codex_pids "yes" "yes" | tr '\n' ' ' | sed 's/ *$//')"
+  if [[ -n "$blocking" ]]; then
+    printf 'BLOCKED: unmanaged codex auth process(es): %s\n' "$blocking" >&2
+    printf 'Close any `codex` running in a terminal (or use --allow-running) before switching.\n' >&2
     return 1
   fi
 
-  printf 'READY: no Codex auth-using processes detected\n'
+  printf 'READY: switch will restart managed Codex surfaces; nothing unmanaged is holding auth.json\n'
 }
 
 acc2_home() {
@@ -356,6 +474,7 @@ acc2_smoke() {
 main() {
   local cmd="${1:-}"
   local manage_app="yes"
+  local manage_vscode="yes"
   local allow_running="no"
 
   case "$cmd" in
@@ -364,26 +483,28 @@ main() {
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --no-app) manage_app="no" ;;
+          --no-vscode) manage_vscode="no" ;;
           --allow-running) allow_running="yes" ;;
           -h|--help) usage; exit 0 ;;
           *) die "unknown option: $1" ;;
         esac
         shift
       done
-      switch_accounts "$manage_app" "$allow_running"
+      switch_accounts "$manage_app" "$manage_vscode" "$allow_running"
       ;;
     restore-last|fix)
       shift
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --no-app) manage_app="no" ;;
+          --no-vscode) manage_vscode="no" ;;
           --allow-running) allow_running="yes" ;;
           -h|--help) usage; exit 0 ;;
           *) die "unknown option: $1" ;;
         esac
         shift
       done
-      restore_last "$manage_app" "$allow_running"
+      restore_last "$manage_app" "$manage_vscode" "$allow_running"
       ;;
     status)
       require_auth_files

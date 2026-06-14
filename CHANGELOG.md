@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-06-14
+
+### Added
+
+- **VS Code / Cursor support for account switching.** All Codex surfaces (CLI,
+  desktop App, editor extension) share `~/.codex/auth.json`, but long-running
+  clients cache the token in memory, so an external swap was invisible to the
+  editor until a manual window reload. Now:
+  - `codex-switch.sh` restarts the editor's `codex app-server` after a swap
+    (kill → the extension host respawns it reading the new account). New
+    `--no-vscode` flag opts out. The process guard no longer blocks on the App
+    or the editor (both are managed); only truly unmanaged `codex app-server`
+    processes (e.g. a terminal `codex`, or a `remodex`/MCP bridge) still block.
+  - `codex-auth-sync.sh` now also detects an **account change** (email differs
+    from last run, not just a token refresh) and restarts the editor's
+    `codex app-server`. This makes a switch done by **Symbioose** — or anything
+    that rewrites `auth.json` — take effect in VS Code automatically, no reload.
+
+### Notes
+
+- Detection covers `.vscode`, `.vscode-insiders`, `.cursor`, `.windsurf`, and
+  `.vscode-server` extension hosts.
+- The editor's Codex panel reconnects on next use after a restart.
+
 ## [0.2.0] — 2026-06-14
 
 ### Removed (BREAKING)
